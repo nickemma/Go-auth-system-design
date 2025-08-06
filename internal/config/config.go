@@ -29,8 +29,8 @@ func Load() *Config {
 
 	return &Config{
 		Port:        getEnv("PORT", "8080"),
-		DatabaseURL: getEnv("DATABASE_URL", "postgres://user:password@localhost/authdb?sslmode=disable"),
-		JWTSecret:   getEnv("JWT_SECRET", "your-secret-key"),
+		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:password@postgres:5432/authdb?sslmode=disable"),
+		JWTSecret:   getEnv("JWT_SECRET", ""),
 		SMTPConfig: SMTPConfig{
 			Host:     getEnv("SMTP_HOST", "smtp.gmail.com"),
 			Port:     getEnv("SMTP_PORT", "587"),

@@ -16,6 +16,7 @@ func SetupRoutes(router *gin.Engine, authHandler *handler.AuthHandler, authMiddl
 		auth.POST("/verify-email", authHandler.VerifyEmail)
 		auth.POST("/resend-verification", authHandler.ResendVerificationEmail)
 		auth.POST("/verify-mfa", authHandler.VerifyMFA)
+		auth.POST("/forgot-password", authHandler.ForgotPassword)
 	}
 
 	// Protected routes
@@ -24,6 +25,7 @@ func SetupRoutes(router *gin.Engine, authHandler *handler.AuthHandler, authMiddl
 	{
 		protected.GET("/profile", authHandler.GetProfile)
 		protected.POST("/logout", authHandler.Logout)
+		protected.POST("/reset-password", authHandler.ResetPassword)
 
 		mfa := protected.Group("/mfa")
 		{

@@ -95,8 +95,49 @@ func (h *AuthHandler) ResendVerificationEmail(c *gin.Context) {
 		return
 	}
 
-	// This is a simplified version - in production, you might want to add rate limiting
-	c.JSON(http.StatusOK, gin.H{"message": "If the email exists, a verification code has been sent"})
+	if err := h.userService.ResendEmailVerification(req.Email); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send verification email"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "If the email exists and is not verified, a verification code has been sent"})
+}
+
+func (h *AuthHandler) ForgotPassword(c *gin.Context) {
+	var req struct {
+		Email string `json:"email" binding:"required,email"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.userService.ForgotPassword(req.Email); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send password reset email"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "If the email exists, a password reset code has been sent"})
+}
+
+func (h *AuthHandler) ResetPassword(c *gin.Context) {
+	var req struct {
+		Code        string `json:"code" binding:"required"`
+		NewPassword string `json:"new_password" binding:"required,min=8"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.userService.ResetPassword(req.Code, req.NewPassword); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Password reset successfully"})
 }
 
 func (h *AuthHandler) SetupMFA(c *gin.Context) {
@@ -184,9 +225,15 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 }
 
 func (h *AuthHandler) GetProfile(c *gin.Context) {
-	user, exists := c.Get("user")
+	userID, exists := c.Get("user_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	user, err := h.userService.GetUserByID(userID.(uuid.UUID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user profile"})
 		return
 	}
 

@@ -1,13 +1,17 @@
 package service
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"errors"
+	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/auth-system/internal/domain/entity"
 	"github.com/auth-system/internal/domain/repository"
 	"github.com/auth-system/internal/infrastructure/email"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
@@ -50,6 +54,12 @@ type AuthResponse struct {
 	User        *entity.User `json:"user"`
 	RequiresMFA bool         `json:"requires_mfa,omitempty"`
 	TempToken   string       `json:"temp_token,omitempty"`
+}
+
+type MFASetupResponse struct {
+	Secret      string   `json:"secret"`
+	QRCodeURL   string   `json:"qr_code_url"`
+	BackupCodes []string `json:"backup_codes"`
 }
 
 func (s *UserService) Register(req RegisterRequest) error {
@@ -121,7 +131,7 @@ func (s *UserService) Login(req LoginRequest) (*AuthResponse, error) {
 		}
 
 		// Verify TOTP code
-		if !totp.Validate(req.TOTPCode, user.MFASecret, time.Now()) {
+		if !totp.Validate(req.TOTPCode, user.MFASecret) {
 			return nil, errors.New("invalid TOTP code")
 		}
 	}
@@ -165,7 +175,7 @@ func (s *UserService) VerifyMFA(tempToken, totpCode string) (*AuthResponse, erro
 	}
 
 	// Verify TOTP code
-	if !totp.Validate(totpCode, user.MFASecret, time.Now()) {
+	if !totp.Validate(totpCode, user.MFASecret) {
 		return nil, errors.New("invalid TOTP code")
 	}
 
@@ -251,131 +261,299 @@ func (s *UserService) VerifyEmail(code string) error {
 	return s.userRepo.Update(user)
 }
 
-func (s *UserService) generateJWTToken(userID uuid.UUID) (string, error) {
-	// Implementation for generating JWT token
-
-	// This is a placeholder; actual implementation will depend on your JWT library
-	return "generated_jwt_token", nil
-}
-
-func (s *UserService) SetupMFA(userID uuid.UUID) (any, error) {
-	// Generate TOTP secret
-	mfaSecret, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      "AuthSystem",
-		AccountName: userID.String(),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	// Save MFA secret to user
+func (s *UserService) SetupMFA(userID uuid.UUID) (*MFASetupResponse, error) {
 	user, err := s.userRepo.GetByID(userID)
 	if err != nil {
 		return nil, err
 	}
 
-	user.MFASecret = mfaSecret.Secret()
-	user.IsMFAEnabled = true
+	if user.IsMFAEnabled {
+		return nil, errors.New("MFA is already enabled")
+	}
+
+	// Generate TOTP secret
+	key, err := totp.Generate(totp.GenerateOpts{
+		Issuer:      "Auth System",
+		AccountName: user.Email,
+		SecretSize:  32,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Generate backup codes
+	backupCodes := make([]string, 10)
+	for i := range backupCodes {
+		backupCodes[i] = s.generateOTP(8)
+	}
+
+	// Save secret to user (but don't enable MFA yet)
+	user.MFASecret = key.Secret()
 	user.UpdatedAt = time.Now()
 
 	if err := s.userRepo.Update(user); err != nil {
 		return nil, err
 	}
 
-	return mfaSecret.URL(), nil
+	// Send backup codes via email
+	if err := s.emailSvc.SendMFABackupCodes(user.Email, backupCodes); err != nil {
+		return nil, err
+	}
+
+	return &MFASetupResponse{
+		Secret:      key.Secret(),
+		QRCodeURL:   key.URL(),
+		BackupCodes: backupCodes,
+	}, nil
 }
 
 func (s *UserService) EnableMFA(userID uuid.UUID, totpCode string) error {
-	// Get user
 	user, err := s.userRepo.GetByID(userID)
 	if err != nil {
 		return err
 	}
-	if user.IsMFAEnabled {
-		return errors.New("MFA is already enabled")
+
+	if user.MFASecret == "" {
+		return errors.New("MFA setup not initiated")
 	}
+
 	// Verify TOTP code
-	if !totp.Validate(totpCode, user.MFASecret, time.Now()) {
+	if !totp.Validate(totpCode, user.MFASecret) {
 		return errors.New("invalid TOTP code")
 	}
+
 	// Enable MFA
 	user.IsMFAEnabled = true
 	user.UpdatedAt = time.Now()
+
 	return s.userRepo.Update(user)
 }
 
 func (s *UserService) DisableMFA(userID uuid.UUID, totpCode string) error {
-	// Get user
 	user, err := s.userRepo.GetByID(userID)
 	if err != nil {
 		return err
 	}
+
 	if !user.IsMFAEnabled {
 		return errors.New("MFA is not enabled")
 	}
+
 	// Verify TOTP code
-	if !totp.Validate(totpCode, user.MFASecret, time.Now()) {
+	if !totp.Validate(totpCode, user.MFASecret) {
 		return errors.New("invalid TOTP code")
 	}
+
 	// Disable MFA
 	user.IsMFAEnabled = false
 	user.MFASecret = ""
 	user.UpdatedAt = time.Now()
+
 	return s.userRepo.Update(user)
 }
 
-func (s *UserService) generateTempToken(userID uuid.UUID) (string, error) {
-	// Generate a temporary token for MFA verification
-	tempToken := uuid.New().String()
-
-	// Save the temporary token to the session repository
-	session := &entity.Session{
-		ID:        uuid.New(),
-		UserID:    userID,
-		Token:     tempToken,
-		ExpiresAt: time.Now().Add(15 * time.Minute), // Token valid for 15 minutes
-		CreatedAt: time.Now(),
-	}
-
-	if err := s.sessionRepo.Create(session); err != nil {
-		return "", err
-	}
-
-	return tempToken, nil
+func (s *UserService) Logout(token string) error {
+	return s.sessionRepo.Delete(token)
 }
 
-func (s *UserService) verifyTempToken(tempToken string) (uuid.UUID, error) {
-	// Verify the temporary token
-	session, err := s.sessionRepo.GetByToken(tempToken)
+func (s *UserService) GetUserByToken(token string) (*entity.User, error) {
+	// Verify JWT token
+	userID, err := s.verifyJWTToken(token)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return uuid.Nil, errors.New("invalid or expired temporary token")
-		}
-		return uuid.Nil, err
+		return nil, err
 	}
 
-	// Check if the session is still valid
+	// Check if session exists
+	session, err := s.sessionRepo.GetByToken(token)
+	if err != nil {
+		return nil, errors.New("invalid session")
+	}
+
 	if session.ExpiresAt.Before(time.Now()) {
-		return uuid.Nil, errors.New("temporary token has expired")
+		return nil, errors.New("session expired")
 	}
 
-	return session.UserID, nil
-}
-
-func (s *UserService) generateOTP(length int) string {
-	// Generate a random OTP of specified length
-	otp := make([]byte, length)
-	for i := range otp {
-		otp[i] = '0' + byte(i%10) // Simple numeric OTP for demonstration
-	}
-	return string(otp)
+	return s.userRepo.GetByID(userID)
 }
 
 func (s *UserService) GetUserByID(userID uuid.UUID) (*entity.User, error) {
-	// Get user by ID
 	user, err := s.userRepo.GetByID(userID)
 	if err != nil {
 		return nil, err
 	}
 	return user, nil
+}
+
+func (s *UserService) ResendEmailVerification(email string) error {
+	// Get user by email
+	user, err := s.userRepo.GetByEmail(email)
+	if err != nil {
+		// Don't reveal if email exists or not for security
+		return nil
+	}
+
+	// Check if already verified
+	if user.IsEmailVerified {
+		return nil
+	}
+
+	// Send new verification OTP
+	return s.SendEmailVerificationOTP(user.ID)
+}
+
+func (s *UserService) ForgotPassword(email string) error {
+	// Get user by email
+	user, err := s.userRepo.GetByEmail(email)
+	if err != nil {
+		// Don't reveal if email exists or not for security
+		return nil
+	}
+
+	// Generate password reset OTP
+	otp := s.generateOTP(6)
+
+	// Save OTP to database
+	otpEntity := &entity.OTP{
+		ID:        uuid.New(),
+		UserID:    user.ID,
+		Code:      otp,
+		Type:      entity.OTPTypePasswordReset,
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+		Used:      false,
+		CreatedAt: time.Now(),
+	}
+
+	if err := s.otpRepo.Create(otpEntity); err != nil {
+		return err
+	}
+
+	// Send password reset email
+	return s.emailSvc.SendOTP(user.Email, otp, "password_reset")
+}
+
+func (s *UserService) ResetPassword(code, newPassword string) error {
+	// Get OTP
+	otpEntity, err := s.otpRepo.GetByCode(code, entity.OTPTypePasswordReset)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return errors.New("invalid or expired OTP")
+		}
+		return err
+	}
+
+	// Mark OTP as used
+	otpEntity.Used = true
+	if err := s.otpRepo.Update(otpEntity); err != nil {
+		return err
+	}
+
+	// Update user password
+	user, err := s.userRepo.GetByID(otpEntity.UserID)
+	if err != nil {
+		return err
+	}
+
+	// Hash new password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+
+	user.Password = string(hashedPassword)
+	user.UpdatedAt = time.Now()
+
+	return s.userRepo.Update(user)
+}
+
+// Private helper methods
+func (s *UserService) generateOTP(length int) string {
+	const digits = "0123456789"
+	result := make([]byte, length)
+
+	for i := range result {
+		num, _ := rand.Int(rand.Reader, big.NewInt(int64(len(digits))))
+		result[i] = digits[num.Int64()]
+	}
+
+	return string(result)
+}
+
+func (s *UserService) generateJWTToken(userID uuid.UUID) (string, error) {
+	claims := jwt.MapClaims{
+		"user_id": userID.String(),
+		"exp":     time.Now().Add(24 * time.Hour).Unix(),
+		"iat":     time.Now().Unix(),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(s.jwtSecret))
+}
+
+func (s *UserService) generateTempToken(userID uuid.UUID) (string, error) {
+	claims := jwt.MapClaims{
+		"user_id": userID.String(),
+		"exp":     time.Now().Add(5 * time.Minute).Unix(),
+		"iat":     time.Now().Unix(),
+		"temp":    true,
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(s.jwtSecret))
+}
+
+func (s *UserService) verifyJWTToken(tokenString string) (uuid.UUID, error) {
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(s.jwtSecret), nil
+	})
+
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+		if temp, exists := claims["temp"]; exists && temp.(bool) {
+			return uuid.Nil, errors.New("temporary token not allowed")
+		}
+
+		userIDStr, ok := claims["user_id"].(string)
+		if !ok {
+			return uuid.Nil, errors.New("invalid token claims")
+		}
+
+		return uuid.Parse(userIDStr)
+	}
+
+	return uuid.Nil, errors.New("invalid token")
+}
+
+func (s *UserService) verifyTempToken(tokenString string) (uuid.UUID, error) {
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(s.jwtSecret), nil
+	})
+
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+		temp, exists := claims["temp"]
+		if !exists || !temp.(bool) {
+			return uuid.Nil, errors.New("not a temporary token")
+		}
+
+		userIDStr, ok := claims["user_id"].(string)
+		if !ok {
+			return uuid.Nil, errors.New("invalid token claims")
+		}
+
+		return uuid.Parse(userIDStr)
+	}
+
+	return uuid.Nil, errors.New("invalid token")
 }

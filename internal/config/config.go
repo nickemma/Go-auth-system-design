@@ -39,8 +39,7 @@ func Load() *Config {
 			From:     getEnv("SMTP_FROM", "noreply@example.com"),
 		},
 	}
-	// Log the loaded configuration for debugging
-	log.Printf("Loaded Config: %+v", cfg)
+
 	return cfg
 }
 
@@ -48,6 +47,5 @@ func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
-	log.Printf("Environment variable %s not set, using default: %s", key, defaultValue)
 	return defaultValue
 }

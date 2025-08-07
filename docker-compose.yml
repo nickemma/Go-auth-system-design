@@ -31,7 +31,7 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - ./.env:/app/.env
+      - ./.env:/root/.env
 
 volumes:
   postgres_data:

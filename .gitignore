@@ -1,1 +1,10 @@
+# Environment files
 .env
+.env.local
+.env.production
+*.env
+
+# Other common files
+node_modules/
+*.log
+dist/

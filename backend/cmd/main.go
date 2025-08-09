@@ -5,9 +5,11 @@ import (
 
 	"github.com/auth-system/internal/application/service"
 	"github.com/auth-system/internal/config"
+	"github.com/auth-system/internal/infrastructure/cache"
 	"github.com/auth-system/internal/infrastructure/database"
 	"github.com/auth-system/internal/infrastructure/email"
 	"github.com/auth-system/internal/infrastructure/repository"
+	"github.com/auth-system/internal/infrastructure/sms"
 	"github.com/auth-system/internal/presentation/handler"
 	"github.com/auth-system/internal/presentation/middleware"
 	"github.com/auth-system/internal/presentation/routes"
@@ -34,13 +36,38 @@ func main() {
 	// Initialize email service
 	emailService := email.NewSMTPEmailService(cfg.SMTPConfig)
 
+	// Initialize Redis cache properly
+	redisCache := cache.NewRedisCache(cfg.RedisConfig.URL, cfg.RedisConfig.Password, cfg.RedisConfig.DB)
+
+	// Initialize SMS service properly with Twilio config
+	smsService := sms.NewTwilioSMSService(
+		cfg.TwilioConfig.AccountSID,
+		cfg.TwilioConfig.AuthToken,
+		cfg.TwilioConfig.FromNumber,
+	)
+
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
 	otpRepo := repository.NewOTPRepository(db)
 	sessionRepo := repository.NewSessionRepository(db)
+	resetTokenRepo := repository.NewResetTokenRepository(db)
+	rateLimitRepo := repository.NewRateLimitRepository(db)
+
+	baseURL := "http://localhost:" + cfg.Port // Base URL for the application
 
 	// Initialize services
-	userService := service.NewUserService(userRepo, otpRepo, sessionRepo, emailService, cfg.JWTSecret)
+	userService := service.NewUserService(
+		userRepo,
+		otpRepo,
+		sessionRepo,
+		resetTokenRepo,
+		rateLimitRepo,
+		emailService,
+		smsService,
+		redisCache,
+		cfg.JWTSecret,
+		baseURL,
+	)
 
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(userService)
@@ -57,9 +84,19 @@ func main() {
 		AllowCredentials: true,
 	}))
 
+	// Health check endpoint
+	router.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status":        "ok",
+			"sms_enabled":   smsService.IsEnabled(),
+			"twilio_config": cfg.TwilioConfig.Enabled,
+		})
+	})
+
 	// Initialize routes
 	routes.SetupRoutes(router, authHandler, middleware.AuthMiddleware(cfg.JWTSecret))
 
 	log.Printf("Server starting on port %s", cfg.Port)
+	log.Printf("SMS Service Enabled: %v", smsService.IsEnabled())
 	log.Fatal(router.Run(":" + cfg.Port))
 }

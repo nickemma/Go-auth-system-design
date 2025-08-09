@@ -1,99 +1,208 @@
-# 1. Register a new user
+# Complete Auth System API Testing Guide
+
+## Prerequisites
+1. Update your Twilio credentials in .env file
+2. Start the services: docker-compose up --build
+3. Check health: GET http://localhost:8080/health
+
+### 1. User Registration Flow
+Register User
+
 ```bash
-curl -X POST http://localhost:8080/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "john.doe@example.com",
-    "password": "securepassword123",
-    "first_name": "John",
-    "last_name": "Doe"
-  }'
+POST http://localhost:8080/api/v1/auth/register
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "password": "password123",
+  "first_name": "John",
+  "last_name": "Doe",
+  "phone_number": "+1234567890"
+}
 ```
 
-# 2. Verify email (use the OTP sent to email)
+### Verify email (use the OTP sent to email)
 ```bash
-curl -X POST http://localhost:8080/api/v1/auth/verify-email \
-  -H "Content-Type: application/json" \
-  -d '{
-    "code": "123456"
-  }'
+POST http://localhost:8080/api/v1/auth/verify-email
+Content-Type: application/json
+
+{
+  "code": "123456"  // Check your email for the code
+}
 ```
 
-# 3. Login user
+### 2. Phone Verification Flow (Protected Routes)
+Login First
+
 ```bash
-curl -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "john.doe@example.com",
-    "password": "securepassword123"
-  }'
+POST http://localhost:8080/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "password": "password123"
+}
+```
+### Update Phone Number (if needed)
+
+```bash
+POST http://localhost:8080/api/v1/phone/update
+Authorization: Bearer YOUR_JWT_TOKEN
+Content-Type: application/json
+
+{
+  "phone_number": "+1234567890"
+}
 ```
 
-# 4. Get user profile (use token from login response)
+### Send Phone Verification SMS
 ```bash
-curl -X GET http://localhost:8080/api/v1/profile \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+POST http://localhost:8080/api/v1/phone/send-verification
+Authorization: Bearer YOUR_JWT_TOKEN
+Content-Type: application/json
+```
+### Verify Phone Number
+```bash
+POST http://localhost:8080/api/v1/phone/verify
+Authorization: Bearer YOUR_JWT_TOKEN
+Content-Type: application/json
+
+{
+  "code": "123456"  // SMS code received
+}
+```
+### 3. MFA Setup Flow
+Setup MFA (Get QR Code & Backup Codes)
+
+```bash
+POST http://localhost:8080/api/v1/mfa/setup
+Authorization: Bearer YOUR_JWT_TOKEN
+Content-Type: application/json
+
+{
+  "method": "authenticator"  // or "sms"
+}
+```
+### Enable MFA (Verify TOTP)
+
+```bash
+POST http://localhost:8080/api/v1/mfa/enable
+Authorization: Bearer YOUR_JWT_TOKEN
+Content-Type: application/json
+
+{
+  "totp_code": "123456"  // From authenticator app
+}
+```
+### 4. MFA Login Flow
+Login (Returns temp token if MFA enabled)
+
+```bash
+POST http://localhost:8080/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "password": "password123"
+}
+
+Response:
+{
+  "success": true,
+  "requires_mfa": true,
+  "temp_token": "eyJ...",
+  "mfa_methods": ["authenticator", "sms", "backup_code"]
+}
 ```
 
-# 5. Setup MFA
+### Send SMS MFA Code (Optional)
+
 ```bash
-curl -X POST http://localhost:8080/api/v1/mfa/setup \
+POST http://localhost:8080/api/v1/auth/send-mfa-code
+Content-Type: application/json
+
+{
+  "temp_token": "eyJ...",
+  "method": "sms"
+}
+```
+### Verify MFA (Complete Login)
+
+```bash
+POST http://localhost:8080/api/v1/auth/verify-mfa
+Content-Type: application/json
+
+{
+  "temp_token": "eyJ...",
+  "code": "123456",
+  "method": "sms"  // or "authenticator" or "backup_code"
+}
+
+Response:
+{
+  "success": true,
+  "token": "eyJ...",  // Final JWT token
+  "user": { ... }
+}
+```
+
+### 5. Password Reset Flow
+Request Password Reset
+
+```bash
+POST http://localhost:8080/api/v1/auth/forgot-password
+Content-Type: application/json
+
+{
+  "email": "test@example.com"
+}
+```
+### Reset Password
+
+```bash
+POST http://localhost:8080/api/v1/auth/reset-password
+Content-Type: application/json
+
+{
+  "token": "reset_token_from_email",
+  "new_password": "newpassword123"
+}
+```
+### 6. Get user profile (use token from login response)
+```bash
+GET http://localhost:8080/api/v1/mfa/enable
+Authorization: Bearer YOUR_JWT_TOKEN
+Content-Type: application/json
+```
+
+### 7. Change password
+```bash
+POST http://localhost:8080/api/v1/change-password \
   -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE" \
-  -H "Content-Type: application/json"
-```
-
-# 6. Enable MFA (use TOTP code from authenticator app)
-```bash
-curl -X POST http://localhost:8080/api/v1/mfa/enable \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE" \
   -H "Content-Type: application/json" \
   -d '{
-    "totp_code": "123456"
+    "current_password": "securepassword123",
+    "new_password": "newsecurepassword456"
   }'
 ```
 
-# 7. Login with MFA
-```bash
-curl -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "john.doe@example.com",
-    "password": "securepassword123",
-    "totp_code": "123456"
-  }'
-```
+### Health Check
+Check Service Status
 
-# 8. Verify MFA (if using temp token flow)
 ```bash
-curl -X POST http://localhost:8080/api/v1/auth/verify-mfa \
-  -H "Content-Type: application/json" \
-  -d '{
-    "temp_token": "TEMP_TOKEN_FROM_LOGIN",
-    "totp_code": "123456"
-  }'
-```
+GET http://localhost:8080/health
 
-# 9. Forgot password
-```bash
-curl -X POST http://localhost:8080/api/v1/auth/forgot-password \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "john.doe@example.com"
-  }'
+Response:
+{
+  "status": "ok",
+  "sms_enabled": true,
+  "twilio_config": true
+}
 ```
+Testing Tips
 
-# 10. Reset password
-```bash
-curl -X POST http://localhost:8080/api/v1/auth/reset-password \
-  -H "Content-Type: application/json" \
-  -d '{
-    "code": "123456",
-    "new_password": "newsecurepassword123"
-  }'
-```
-
-# 11. Logout
-```bash
-curl -X POST http://localhost:8080/api/v1/logout \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
-```
+- **Phone Number Format:** Always use international format with country code (+1234567890)
+- **SMS Delivery:** Check your phone for SMS codes (may take 1-2 minutes)
+- **Rate Limiting:** Wait between requests if you hit rate limits
+- **Token Expiry:** Temp tokens expire in 10 minutes, regular JWT tokens in 24 hours
+- **MFA Methods:** Ensure phone is verified before SMS MFA becomes available

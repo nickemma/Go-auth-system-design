@@ -5,15 +5,28 @@ services:
     image: postgres:15-alpine
     container_name: auth_postgres
     environment:
-      POSTGRES_DB: authdb
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    container_name: auth_redis
+    ports:
+      - "${REDIS_PORT}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -24,14 +37,35 @@ services:
       dockerfile: Dockerfile
     container_name: auth_app
     ports:
-      - "8080:8080"
+      - "${PORT}:${PORT}"
+    env_file:
+      - .env 
     environment:
-      DATABASE_URL: postgres://postgres:password@postgres:5432/authdb?sslmode=disable
+      # Database and Redis connection strings 
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://${REDIS_HOST}:${REDIS_PORT}/0
+      # Application specific environment variables
+      JWT_SECRET: ${JWT_SECRET}
+      PORT: ${PORT}
+      # Email configuration for notifications
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM: ${SMTP_FROM}
+      # Twilio configuration for SMS notifications
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
+      TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
-      - ./.env:/root/.env
+      - .:/app     
+      - ./.env:/app/.env
 
 volumes:
   postgres_data:
+  redis_data:

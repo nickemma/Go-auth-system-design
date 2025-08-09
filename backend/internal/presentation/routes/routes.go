@@ -13,9 +13,13 @@ func SetupRoutes(router *gin.Engine, authHandler *handler.AuthHandler, authMiddl
 	{
 		auth.POST("/register", authHandler.Register)
 		auth.POST("/login", authHandler.Login)
+
 		auth.POST("/verify-email", authHandler.VerifyEmail)
 		auth.POST("/resend-verification", authHandler.ResendVerificationEmail)
+
+		auth.POST("/send-mfa-code", authHandler.SendMFACode)
 		auth.POST("/verify-mfa", authHandler.VerifyMFA)
+
 		auth.POST("/forgot-password", authHandler.ForgotPassword)
 		auth.POST("/reset-password", authHandler.ResetPassword)
 	}
@@ -24,9 +28,20 @@ func SetupRoutes(router *gin.Engine, authHandler *handler.AuthHandler, authMiddl
 	protected := api.Group("/")
 	protected.Use(authMiddleware)
 	{
+		// User profile routes
 		protected.GET("/profile", authHandler.GetProfile)
 		protected.POST("/logout", authHandler.Logout)
+		protected.POST("/change-password", authHandler.ChangePassword)
 
+		// Phone verification routes
+		phone := protected.Group("/phone")
+		{
+			phone.POST("/update", authHandler.UpdatePhoneNumber)
+			phone.POST("/send-verification", authHandler.SendPhoneVerification)
+			phone.POST("/verify", authHandler.VerifyPhone)
+		}
+
+		// MFA management routes
 		mfa := protected.Group("/mfa")
 		{
 			mfa.POST("/setup", authHandler.SetupMFA)

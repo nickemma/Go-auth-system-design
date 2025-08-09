@@ -11,6 +11,7 @@ import (
 type EmailService interface {
 	SendOTP(to, otp string, otpType string) error
 	SendMFABackupCodes(to string, codes []string) error
+	SendPasswordResetLink(to, resetURL string) error
 }
 
 type smtpEmailService struct {
@@ -62,6 +63,22 @@ func (s *smtpEmailService) SendMFABackupCodes(to string, codes []string) error {
 		body += fmt.Sprintf("%d. %s\n", i+1, code)
 	}
 	body += "\nPlease store these codes in a safe place. Each code can only be used once."
+
+	m.SetBody("text/plain", body)
+
+	port, _ := strconv.Atoi(s.config.Port)
+	d := gomail.NewDialer(s.config.Host, port, s.config.Username, s.config.Password)
+
+	return d.DialAndSend(m)
+}
+
+func (s *smtpEmailService) SendPasswordResetLink(to, resetURL string) error {
+	m := gomail.NewMessage()
+	m.SetHeader("From", s.config.From)
+	m.SetHeader("To", to)
+	m.SetHeader("Subject", "Password Reset Link")
+
+	body := fmt.Sprintf("Click the following link to reset your password:\n\n%s\n\nThis link will expire in 1 hour.\n\nIf you did not request this reset, please ignore this email.", resetURL)
 
 	m.SetBody("text/plain", body)
 

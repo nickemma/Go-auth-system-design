@@ -63,8 +63,7 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - .:/app     
-      - ./.env:/app/.env
+       - ./.env:/root/.env
 
 volumes:
   postgres_data:

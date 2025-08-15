@@ -1,11 +1,13 @@
 package routes
 
 import (
+	"github.com/auth-system/internal/application/service"
 	"github.com/auth-system/internal/presentation/handler"
+	"github.com/auth-system/internal/presentation/middleware"
 	"github.com/gin-gonic/gin"
 )
 
-func SetupRoutes(router *gin.Engine, authHandler *handler.AuthHandler, authMiddleware gin.HandlerFunc) {
+func SetupRoutes(router *gin.Engine, authHandler *handler.AuthHandler, userService *service.UserService, jwtSecret string) {
 	api := router.Group("/api/v1")
 
 	// Public routes
@@ -26,7 +28,7 @@ func SetupRoutes(router *gin.Engine, authHandler *handler.AuthHandler, authMiddl
 
 	// Protected routes
 	protected := api.Group("/")
-	protected.Use(authMiddleware)
+	protected.Use(middleware.AuthMiddleware(jwtSecret))
 	{
 		// User profile routes
 		protected.GET("/profile", authHandler.GetProfile)
@@ -49,4 +51,20 @@ func SetupRoutes(router *gin.Engine, authHandler *handler.AuthHandler, authMiddl
 			mfa.POST("/disable", authHandler.DisableMFA)
 		}
 	}
+
+	// Admin routes (require authentication + admin role)
+	admin := protected.Group("/admin")
+	admin.Use(middleware.AdminMiddleware(userService))
+	{
+		// User management
+		admin.GET("/users/:id", authHandler.GetUserByID)
+		admin.GET("/users", authHandler.GetAllUsers)
+		admin.PUT("/users/:id/role", authHandler.UpdateUserRole)
+
+		// Future admin endpoints can be added here:
+		// admin.DELETE("/users/:id", authHandler.DeleteUser)
+		// admin.GET("/analytics", authHandler.GetAnalytics)
+		// admin.GET("/sessions", authHandler.GetActiveSessions)
+	}
+
 }

@@ -32,6 +32,7 @@ func RunMigrations(db *sql.DB) error {
             first_name VARCHAR(100) NOT NULL,
             last_name VARCHAR(100) NOT NULL,
             phone_number VARCHAR(20),
+            role VARCHAR(20) DEFAULT 'user', 
             is_phone_verified BOOLEAN DEFAULT FALSE,
             is_email_verified BOOLEAN DEFAULT FALSE,
             is_mfa_enabled BOOLEAN DEFAULT FALSE,
@@ -44,6 +45,8 @@ func RunMigrations(db *sql.DB) error {
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 
         );`,
+
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(20) DEFAULT 'user';`,
 
 		`CREATE TABLE IF NOT EXISTS otps (
            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -85,6 +88,7 @@ func RunMigrations(db *sql.DB) error {
 
 		// Create indexes for performance optimization
 		`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);`,
+		`CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);`,
 		`CREATE INDEX IF NOT EXISTS idx_otps_code ON otps(code);`,
 		`CREATE INDEX IF NOT EXISTS idx_otps_user_id ON otps(user_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);`,

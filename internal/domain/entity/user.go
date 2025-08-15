@@ -14,6 +14,7 @@ type User struct {
 	LastName        string     `json:"last_name" db:"last_name"`
 	PhoneNumber     *string    `json:"phone_number,omitempty" db:"phone_number"`
 	IsPhoneVerified bool       `json:"is_phone_verified" db:"is_phone_verified"`
+	Role            string     `json:"role" db:"role"` // NEW FIELD
 	IsEmailVerified bool       `json:"is_email_verified" db:"is_email_verified"`
 	IsMFAEnabled    bool       `json:"is_mfa_enabled" db:"is_mfa_enabled"`
 	MFASecret       string     `json:"-" db:"mfa_secret"`

@@ -221,8 +221,14 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 }
 
 func (h *AuthHandler) ResetPassword(c *gin.Context) {
+	// Get token from URL query parameter
+	token := c.Query("token")
+	if token == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Reset token is required in URL"})
+		return
+	}
+	// Get new password from request body
 	var req struct {
-		Token       string `json:"token" binding:"required"`
 		NewPassword string `json:"new_password" binding:"required,min=8"`
 	}
 
@@ -232,7 +238,7 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	}
 
 	ipAddress := h.getClientIP(c)
-	if err := h.userService.ResetPasswordWithToken(req.Token, req.NewPassword, ipAddress); err != nil {
+	if err := h.userService.ResetPasswordWithToken(token, req.NewPassword, ipAddress); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -392,4 +398,88 @@ func (h *AuthHandler) UpdatePhoneNumber(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Phone number updated successfully. Please verify it."})
+}
+
+// Admin: Get user by ID
+func (h *AuthHandler) GetUserByID(c *gin.Context) {
+	userIDParam := c.Param("id")
+	if userIDParam == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User ID is required"})
+		return
+	}
+
+	userID, err := uuid.Parse(userIDParam)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID format"})
+		return
+	}
+
+	user, err := h.userService.GetUserByID(userID)
+	if err != nil {
+		if err.Error() == "sql: no rows in result set" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"user":    user,
+		"message": "User retrieved successfully",
+	})
+}
+
+// Admin: Get all users (with pagination)
+func (h *AuthHandler) GetAllUsers(c *gin.Context) {
+	page := c.Query("page")
+	if page == "" {
+		page = "1" // Default to page 1 if not provided
+	}
+
+	pageSize := c.Query("page_size")
+	if pageSize == "" {
+		pageSize = "10" // Default to 10 items per page if not provided
+	}
+
+	users, err := h.userService.GetAllUsers()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get users"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"users": users,
+	})
+}
+
+// Admin: Update user role
+func (h *AuthHandler) UpdateUserRole(c *gin.Context) {
+	userIDParam := c.Param("id")
+	if userIDParam == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User ID is required"})
+		return
+	}
+
+	userID, err := uuid.Parse(userIDParam)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID format"})
+		return
+	}
+
+	var req struct {
+		Role string `json:"role" binding:"required,oneof=admin user"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.userService.UpdateUserRole(userID, req.Role); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update user role"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "User role updated successfully"})
 }

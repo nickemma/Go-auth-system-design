@@ -11,7 +11,6 @@ import (
 	"github.com/auth-system/internal/infrastructure/repository"
 	"github.com/auth-system/internal/infrastructure/sms"
 	"github.com/auth-system/internal/presentation/handler"
-	"github.com/auth-system/internal/presentation/middleware"
 	"github.com/auth-system/internal/presentation/routes"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -94,7 +93,7 @@ func main() {
 	})
 
 	// Initialize routes
-	routes.SetupRoutes(router, authHandler, middleware.AuthMiddleware(cfg.JWTSecret))
+	routes.SetupRoutes(router, authHandler, userService, cfg.JWTSecret)
 
 	log.Printf("Server starting on port %s", cfg.Port)
 	log.Printf("SMS Service Enabled: %v", smsService.IsEnabled())

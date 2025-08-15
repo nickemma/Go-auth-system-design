@@ -10,6 +10,8 @@ import (
 type UserRepository interface {
 	Create(user *entity.User) error
 	GetByID(id uuid.UUID) (*entity.User, error)
+	UpdateUserRole(id uuid.UUID, role string) error
+	GetAll() ([]*entity.User, error)
 	GetByEmail(email string) (*entity.User, error)
 	Update(user *entity.User) error
 	Delete(id uuid.UUID) error

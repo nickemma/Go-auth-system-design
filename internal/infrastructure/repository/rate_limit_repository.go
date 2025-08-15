@@ -17,18 +17,30 @@ func NewRateLimitRepository(db *sql.DB) repository.RateLimitRepository {
 }
 
 func (r *rateLimitRepository) Increment(key string, windowSeconds int) (*entity.RateLimit, error) {
+	// Single query approach: Reset if expired, otherwise increment
 	query := `INSERT INTO rate_limits (key, count, expires_at, created_at)
               VALUES ($1, 1, NOW() + INTERVAL '%d seconds', NOW())
               ON CONFLICT (key) 
-              DO UPDATE SET count = rate_limits.count + 1
-              WHERE rate_limits.expires_at > NOW()
+              DO UPDATE SET 
+                count = CASE 
+                  WHEN rate_limits.expires_at <= NOW() THEN 1 
+                  ELSE rate_limits.count + 1 
+                END,
+                expires_at = CASE 
+                  WHEN rate_limits.expires_at <= NOW() THEN NOW() + INTERVAL '%d seconds'
+                  ELSE rate_limits.expires_at 
+                END,
+                created_at = CASE 
+                  WHEN rate_limits.expires_at <= NOW() THEN NOW()
+                  ELSE rate_limits.created_at 
+                END
               RETURNING key, count, expires_at, created_at`
 
 	rl := &entity.RateLimit{}
-	err := r.db.QueryRow(fmt.Sprintf(query, windowSeconds), key).Scan(
+	err := r.db.QueryRow(fmt.Sprintf(query, windowSeconds, windowSeconds), key).Scan(
 		&rl.Key, &rl.Count, &rl.ExpiresAt, &rl.CreatedAt)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to increment rate limit: %v", err)
 	}
 	return rl, nil
 }

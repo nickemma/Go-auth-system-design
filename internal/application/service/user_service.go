@@ -66,6 +66,7 @@ type RegisterRequest struct {
 	FirstName   string  `json:"first_name" binding:"required"`
 	LastName    string  `json:"last_name" binding:"required"`
 	PhoneNumber *string `json:"phone_number,omitempty"`
+	Role        string  `json:"role,omitempty"` // Optional, defaults to "user"
 }
 
 type LoginRequest struct {
@@ -118,6 +119,17 @@ func (s *UserService) Register(req RegisterRequest, ipAddress string) error {
 		return err
 	}
 
+	// Set default role if not provided
+	role := req.Role
+	if role == "" {
+		role = "user"
+	}
+
+	// Validate role
+	if role != "user" && role != "admin" {
+		return errors.New("invalid role")
+	}
+
 	// Create user
 	user := &entity.User{
 		ID:              uuid.New(),
@@ -126,6 +138,7 @@ func (s *UserService) Register(req RegisterRequest, ipAddress string) error {
 		FirstName:       req.FirstName,
 		LastName:        req.LastName,
 		PhoneNumber:     req.PhoneNumber,
+		Role:            role,
 		IsEmailVerified: false,
 		IsPhoneVerified: false,
 		IsMFAEnabled:    false,
@@ -593,11 +606,31 @@ func (s *UserService) DisableMFA(userID uuid.UUID, totpCode string) error {
 }
 
 func (s *UserService) GetUserByToken(token string) (*entity.User, error) {
+	// First verify the JWT token
 	userID, err := s.verifyJWTToken(token)
 	if err != nil {
 		return nil, err
 	}
 
+	// Check if this is a temporary token by parsing it
+	parsedToken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(s.jwtSecret), nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	if claims, ok := parsedToken.Claims.(jwt.MapClaims); ok && parsedToken.Valid {
+		// If this is a temporary token, don't check for session
+		if temp, exists := claims["temp"]; exists && temp.(bool) {
+			return s.userRepo.GetByID(userID)
+		}
+	}
+	// For regular tokens, check session exists
 	session, err := s.sessionRepo.GetByToken(token)
 	if err != nil {
 		return nil, errors.New("invalid session")
@@ -612,6 +645,27 @@ func (s *UserService) GetUserByToken(token string) (*entity.User, error) {
 
 func (s *UserService) GetUserByID(userID uuid.UUID) (*entity.User, error) {
 	return s.userRepo.GetByID(userID)
+}
+
+func (s *UserService) GetAllUsers() ([]*entity.User, error) {
+	return s.userRepo.GetAll()
+}
+
+func (s *UserService) UpdateUserRole(userID uuid.UUID, newRole string) error {
+	// Validate role
+	if newRole != "user" && newRole != "admin" {
+		return errors.New("invalid role")
+	}
+
+	user, err := s.userRepo.GetByID(userID)
+	if err != nil {
+		return err
+	}
+
+	user.Role = newRole
+	user.UpdatedAt = time.Now()
+
+	return s.userRepo.Update(user)
 }
 
 // email Verification
